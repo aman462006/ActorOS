@@ -1,0 +1,15 @@
+# Build artifacts
+*.bin
+*.img
+*.o
+*.log
+qemu.log
+
+# Bootloader binaries
+bootloader/stage1.bin
+bootloader/stage2.bin
+
+# IDE
+.vscode/
+*.swp
+*~
