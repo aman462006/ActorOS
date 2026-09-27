@@ -16,12 +16,10 @@ typedef struct RunQueue {
 
 static RunQueue run_queues[ACTOR_PRIO_LEVELS];
 
-/* Inline actor linked list reuse: we store next/prev pointers using children[0] and
-   children[1] as queue links (when not in a queue, these are unused anyway). */
-#define QUEUE_NEXT(a) ((Actor*)(a)->children[0])
-#define QUEUE_PREV(a) ((Actor*)(a)->children[1])
-#define SET_QUEUE_NEXT(a, n) ((a)->children[0] = (uint64_t)(n))
-#define SET_QUEUE_PREV(a, p) ((a)->children[1] = (uint64_t)(p))
+#define QUEUE_NEXT(a)        ((a)->sched_next)
+#define QUEUE_PREV(a)        ((a)->sched_prev)
+#define SET_QUEUE_NEXT(a, n) ((a)->sched_next = (n))
+#define SET_QUEUE_PREV(a, p) ((a)->sched_prev = (p))
 
 static void rq_push(RunQueue* rq, Actor* a) {
     SET_QUEUE_NEXT(a, NULL);

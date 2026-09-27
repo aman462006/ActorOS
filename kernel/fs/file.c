@@ -41,8 +41,8 @@ static void handle_read(Message* msg, FileState* fs) {
     if (len > max_data) len = max_data;
 
     uint8_t payload[40];
-    __builtin_memcpy(payload,     &len,                4);
-    __builtin_memcpy(payload + 4, fs->data + offset,   len);
+    kmemcpy(payload,     &len,                4);
+    kmemcpy(payload + 4, fs->data + offset,   len);
     fs_reply(msg, MSG_FS_READ_RESP, 0, payload, 4 + len);
 }
 
@@ -60,12 +60,13 @@ static void handle_write(Message* msg, FileState* fs) {
     uint32_t max_payload = MSG_MAX_DATA - 20;  /* 28 bytes max inline data */
     if (len > max_payload) len = max_payload;
 
-    uint32_t end = offset + len;
-    if (end > FS_MAX_FILE_SIZE) {
+    /* Check bounds without overflow: offset+len can wrap if both are large. */
+    if (offset > FS_MAX_FILE_SIZE || len > FS_MAX_FILE_SIZE - offset) {
         fs_reply(msg, MSG_FS_WRITE_RESP, 2, NULL, 0);  /* out of space */
         return;
     }
-    __builtin_memcpy(fs->data + offset, msg->data + 20, len);
+    uint32_t end = offset + len;
+    kmemcpy(fs->data + offset, msg->data + 20, len);
     if (end > fs->size) fs->size = end;
     fs_reply(msg, MSG_FS_WRITE_RESP, 0, &len, 4);
 }
@@ -74,8 +75,8 @@ static void handle_stat(Message* msg, FileState* fs) {
     uint8_t buf[12];
     uint64_t sz = fs->size;
     uint32_t ty = fs->type;
-    __builtin_memcpy(buf,     &sz, 8);
-    __builtin_memcpy(buf + 8, &ty, 4);
+    kmemcpy(buf,     &sz, 8);
+    kmemcpy(buf + 8, &ty, 4);
     fs_reply(msg, MSG_FS_STAT_RESP, 0, buf, 12);
 }
 

@@ -69,10 +69,13 @@ main:
 
     ; AX = extended memory 1MB-16MB in 1KB blocks
     ; BX = extended memory 16MB-4GB in 64KB blocks
-    mov [BOOT_INFO_ADDR + 4], ax   ; mem_lower_kb (conventional)
+    mov [BOOT_INFO_ADDR + 4], ax   ; mem_lower_kb (16-bit write)
     movzx eax, bx
     shl eax, 6                     ; convert 64KB blocks to KB
-    add eax, [BOOT_INFO_ADDR + 4]
+    ; Use movzx to read only the 16-bit ax value — avoid garbage in upper 16 bits
+    ; of the dword at BOOT_INFO_ADDR+4 (the dword was never fully initialised).
+    movzx ecx, word [BOOT_INFO_ADDR + 4]
+    add eax, ecx
     mov [BOOT_INFO_ADDR + 8], eax  ; mem_upper_kb
     jmp .mem_done
 
@@ -105,17 +108,36 @@ main:
     jmp .kernel_loaded
 
 .no_ext:
-    ; Fallback CHS read (assumes small disk, track 0, head 0, sectors 11-74)
-    mov ah, 0x02
-    mov al, KERNEL_SECTORS
-    mov ch, 0           ; cylinder 0
-    mov cl, KERNEL_LBA_START + 1  ; 1-based
-    mov dh, 0
-    mov dl, [boot_drive]
-    mov bx, 0
+    ; CHS fallback — standard BIOS geometry is 63 sectors/track (1-based).
+    ; Kernel starts at LBA 10 = CHS (cyl=0, head=0, sector=11).
+    ; Sectors remaining on head 0: 63 - 10 = 53.  We must not cross the
+    ; track boundary in a single INT 13h call (some BIOSes refuse to wrap).
+    ; Read 1: head 0, sectors 11-63 (53 sectors → 27 136 bytes at buffer:0)
+    ; Read 2: head 1, sectors  1-63 (63 sectors → 32 256 bytes at buffer:27136)
+    ; Total: 116 sectors = 59 392 bytes — well above the 28 KB kernel.
     mov ax, KERNEL_LOAD_SEG
     mov es, ax
+
+    mov ah, 0x02
+    mov al, 53                      ; sectors to end of track 0 head 0
+    mov ch, 0                       ; cylinder 0
+    mov cl, KERNEL_LBA_START + 1    ; sector 11 (1-based)
+    mov dh, 0                       ; head 0
+    mov dl, [boot_drive]
+    xor bx, bx                      ; dest offset 0
     int 0x13
+    jc .disk_error
+
+    ; Second chunk: full track on head 1 (63 sectors)
+    mov ah, 0x02
+    mov al, 63
+    mov ch, 0
+    mov cl, 1                       ; sector 1 (1-based)
+    mov dh, 1                       ; head 1
+    mov dl, [boot_drive]
+    mov bx, 53 * 512                ; dest offset = 27 136
+    int 0x13
+
     xor ax, ax
     mov es, ax
     jc .disk_error

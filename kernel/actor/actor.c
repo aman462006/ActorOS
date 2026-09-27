@@ -143,9 +143,12 @@ void actor_destroy(Actor* a) {
         if (actor_table[i] == a) { actor_table[i] = NULL; break; }
     }
 
-    /* Free stack and struct */
-    uint8_t* stack_base = (uint8_t*)(a->stack_top - a->stack_size);
-    kfree(stack_base);
+    /* Increment generation so any outstanding capabilities become stale. */
+    a->generation++;
+
+    /* Free stack. stack_phys_base is the actual kmalloc'd pointer.
+     * stack_top is virtual (0x80000+size for isolated actors), not the heap ptr. */
+    kfree((void*)a->stack_phys_base);
     kfree(a);
 }
 
@@ -198,16 +201,24 @@ bool actor_send(Actor* sender, uint32_t cap_idx, Message* msg) {
 /* ── Receive — blocks if mailbox empty ── */
 bool actor_recv(Actor* self, Message* out) {
     while (true) {
-        if (actor_try_recv(self, out)) return true;
-        /* Mailbox empty — block */
+        /* Disable interrupts before checking the mailbox to close the TOCTOU
+         * window: without CLI, an interrupt could deliver a message after
+         * try_recv returns false but before we set blocked=true, causing us
+         * to sleep with a message sitting in the mailbox and no waker. */
+        cli();
+        if (actor_try_recv(self, out)) {
+            sti();
+            return true;
+        }
         self->state = ACTOR_BLOCKED;
         self->mailbox.blocked = true;
-        /* Yield to scheduler — we'll be re-queued when a message arrives */
+        /* context_switch saves rflags (IF=0) and restores next's (IF=1),
+         * so the new actor runs with interrupts enabled. When we are woken
+         * and return here, rflags is restored with IF=0 — loop re-checks. */
         Actor* next = scheduler_next();
         if (next && next != self) {
             actor_context_switch(&self->context, &next->context);
         } else {
-            /* Nothing else to run — spin with HLT */
             sti();
             hlt();
             cli();

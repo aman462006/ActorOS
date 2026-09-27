@@ -91,6 +91,15 @@ static bool e1000_scan(E1000State* e) {
             uint32_t cmd = pci_read32(bus, dev, 0, 0x04);
             pci_write32(bus, dev, 0, 0x04, cmd | 0x6);
 
+            /* Map the 128 KB E1000 register file into the current page tables.
+             * BAR0 is a physical address outside the identity-mapped 0-4 MB range,
+             * so it is not present by default and would cause a page fault on first
+             * MMIO access.  PTE_WRITABLE is required for register writes.
+             * (Ideally PTE_PWT|PTE_PCD for uncached MMIO, but PAT is not set up.) */
+            for (uintptr_t off = 0; off < 0x20000; off += PAGE_SIZE)
+                vmm_map(e->mmio_base + off, e->mmio_base + off,
+                        PTE_PRESENT | PTE_WRITABLE);
+
             e->found = true;
             return true;
         }

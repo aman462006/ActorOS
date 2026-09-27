@@ -128,6 +128,11 @@ struct Actor {
     uint64_t    children[16];
     uint32_t    child_count;
 
+    /* Scheduler run-queue links — kept separate from children[] to prevent
+     * scheduler_enqueue from overwriting child actor IDs stored there. */
+    Actor*      sched_next;
+    Actor*      sched_prev;
+
     void (*entry)(Actor* self);
 };
 
