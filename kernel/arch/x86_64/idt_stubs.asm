@@ -25,14 +25,18 @@ isr_common:
     push r14
     push r15
 
-    ; Windows x64 ABI: first arg = rcx = pointer to InterruptFrame
-    mov rcx, rsp
-    ; Align stack to 16 bytes (Windows ABI requires this before call)
+    ; Save frame pointer in r15 (callee-saved in Windows x64 ABI).
+    ; We cannot use rcx here: rcx is caller-saved, so interrupt_dispatch
+    ; is free to destroy it. Using rcx and then restoring RSP from it after
+    ; the call would set RSP to garbage, corrupting all subsequent pops.
+    ; r15 is callee-saved — the C function must preserve it, so it is
+    ; guaranteed to still hold the frame pointer after the call returns.
+    mov r15, rsp
+    mov rcx, r15        ; Windows x64 ABI: first arg in rcx
     sub rsp, 32         ; shadow space
-    and rsp, ~15
+    and rsp, ~15        ; 16-byte align
     call interrupt_dispatch
-    ; Restore RSP (we modified it for alignment + shadow)
-    mov rsp, rcx        ; rcx still points to frame top
+    mov rsp, r15        ; r15 is callee-saved: still the frame top after the call
 
     pop r15
     pop r14

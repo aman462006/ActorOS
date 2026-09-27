@@ -83,17 +83,32 @@ uintptr_t vmm_virt_to_phys(uintptr_t virt) {
     return (pt[PT_IDX(virt)] & PTE_ADDR_MASK) | (virt & 0xFFF);
 }
 
-/* Create a new isolated address space with kernel upper-half copied */
+/* Create a new isolated address space with kernel mappings shared. */
 uintptr_t vmm_new_space(void) {
     uintptr_t pml4_phys = frame_alloc();
     if (!pml4_phys) return 0;
     uint64_t* pml4 = pt_phys_to_virt(pml4_phys);
     kmemset(pml4, 0, PAGE_SIZE);
 
-    /* Share kernel mappings (PML4 entries 256-511 = upper half) */
+    /* Share kernel upper-half (PML4 entries 256-511). */
     uint64_t* cur_pml4 = pt_phys_to_virt(read_cr3() & PTE_ADDR_MASK);
     for (int i = 256; i < 512; i++)
         pml4[i] = cur_pml4[i];
+
+    /* Identity-map 0–4MB with 4KB pages in the new space.
+     *
+     * The parent's PML4[0] uses 2MB huge pages (set up by the bootloader).
+     * We cannot copy that entry: when vmm_map_in later inserts the per-actor
+     * stack pages at 0x80000, it walks PML4→PDPT→PD and calls
+     * get_or_create_table on PD[0]. A huge-page PD entry has PTE_PRESENT set,
+     * so get_or_create_table returns (PD[0] & PTE_ADDR_MASK) = 0x0 — it
+     * misinterprets the huge-page entry as a PT at physical address 0, then
+     * writes stack PTEs into the IVT/BIOS area. The actor triple-faults.
+     *
+     * Building fresh 4KB PTEs avoids this: vmm_map_in finds real PT tables and
+     * can insert the stack pages at 0x80000 without conflict. */
+    for (uintptr_t phys = 0; phys < 0x400000; phys += PAGE_SIZE)
+        vmm_map_in(pml4_phys, phys, phys, PTE_PRESENT | PTE_WRITABLE);
 
     return pml4_phys;
 }

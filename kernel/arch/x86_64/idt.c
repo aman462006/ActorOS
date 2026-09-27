@@ -97,14 +97,14 @@ static const char* exception_names[] = {
     "Control protection",
 };
 
+/* timer_handler is defined in drivers/timer.c */
+extern void timer_handler(void);
+
 /* Called from every asm stub after registers are pushed */
 void interrupt_dispatch(InterruptFrame* frame) {
     uint64_t vec = frame->int_no;
 
     if (vec < 32) {
-        /* CPU exception */
-        /* For now: print info over serial and halt.
-           Future: send message to supervisor actor. */
         extern void serial_puts(const char* s);
         extern void serial_puthex(uint64_t v);
         serial_puts("\n[EXCEPTION] ");
@@ -122,11 +122,24 @@ void interrupt_dispatch(InterruptFrame* frame) {
     }
 
     if (vec >= 32 && vec < 48) {
-        /* Hardware IRQ from PIC */
         uint8_t irq = (uint8_t)(vec - 32);
-        irq_dispatch(irq);
+
+        /* Send EOI before any potential context switch.
+         * If timer_handler triggers a scheduler switch, the new actor runs
+         * with interrupts enabled (its saved RFLAGS has IF=1). If EOI were
+         * sent after the switch, the PIC would hold IRQ0 masked for the
+         * entire time the other actor runs — missing ticks. */
         pic_send_eoi(irq);
+
+        /* Route IRQ to registered actor mailbox (no context switch — just enqueues). */
+        irq_dispatch(irq);
+
+        /* IRQ0: drive the scheduler tick.  This is the only call that may
+         * trigger actor_context_switch().  It must come after EOI and after
+         * irq_dispatch so the timer_mon actor is already woken before we
+         * potentially deschedule the current one. */
+        if (irq == 0) timer_handler();
     }
 
-    /* Vectors 48-255: software-defined, ignored for now */
+    /* Vectors 48-255: software interrupts, ignored for now */
 }
